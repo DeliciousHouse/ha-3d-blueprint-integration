@@ -1,10 +1,16 @@
 {
     "domain": "ha_3d_blueprint",
     "name": "HA 3D Blueprint",
+    "codeowners": [
+        "@DeliciousHouse"
+      ],
     "config_flow": true,
-    "documentation": "https://github.com/your-username/ha-3d-blueprint-integration",
-    "issue_tracker": "https://github.com/your-username/ha-3d-blueprint-integration/issues",
-    "codeowners": ["@your-username"],
+    "dependencies": [],
+    "documentation": "https://github.com/delicioushouse/ha-3d-blueprint-integration",
+    "issue_tracker": "https://github.com/delicioushouse/ha-3d-blueprint-integration/issues",
     "iot_class": "local_polling",
-    "version": "0.1.0"
+    "quality_scale": "bronze",
+    "requirements": [],
+    "ssdp": [],
+    "zeroconf": []
 }

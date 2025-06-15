@@ -1,56 +1,67 @@
+"""The HA 3D Blueprint integration."""
+
+from __future__ import annotations
+
 import logging
 
-from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform, CONF_HOST
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .api import ApiConnectionError, BlueprintApiClient
 from .const import DOMAIN
+
+# List of platforms that this integration will support.
+PLATFORMS: list[Platform] = [Platform.CAMERA, Platform.BUTTON]
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["camera", "button"]
+# Create a type alias for the ConfigEntry that holds our API object.
+type BlueprintConfigEntry = ConfigEntry[BlueprintApiClient]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: BlueprintConfigEntry) -> bool:
     """Set up HA 3D Blueprint from a config entry."""
-    _LOGGER.info("Setting up HA 3D Blueprint for entry %s", entry.title)
+    _LOGGER.info("Setting up HA 3D Blueprint entry: %s", entry.title)
 
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {"config": entry.data}
+    host = entry.data[CONF_HOST]
 
-    await async_configure_addon(hass, entry)
+    # 1. Create an API instance to communicate with the add-on.
+    api_client = BlueprintApiClient(
+        host=host,
+        session=async_get_clientsession(hass),
+    )
 
+    # 2. Configure the add-on engine with the data from the config entry.
+    # This is the new step we are adding.
+    try:
+        _LOGGER.info("Sending configuration to Blueprint Engine Add-on...")
+        await api_client.configure_engine(config_data=entry.data)
+        _LOGGER.info("Successfully configured Blueprint Engine Add-on.")
+    except ApiConnectionError as exc:
+        _LOGGER.error("Failed to configure add-on, connection error: %s", exc)
+        # We return False here because the integration cannot function
+        # if the initial configuration fails.
+        return False
+    except Exception as exc:
+        _LOGGER.error("An unexpected error occurred during add-on configuration: %s", exc)
+        return False
+
+
+    # 3. Store the API object in the entry's runtime_data.
+    # This makes it accessible to our platforms (camera.py and button.py).
+    entry.runtime_data = api_client
+
+    # 4. Forward the setup to the camera and button platforms.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
 
 
-async def async_configure_addon(hass: HomeAssistant, entry: ConfigEntry):
-    """Send the configuration data to the Blueprint Engine add-on."""
-    _LOGGER.info("Sending configuration to Blueprint Engine Add-on...")
-
-    config_data = entry.data
-    addon_url = "http://blueprint_engine.local.hass.io:8124/configure"
-    session = async_get_clientsession(hass)
-
-    try:
-        async with session.post(addon_url, json=config_data) as response:
-            if response.status == 200:
-                _LOGGER.info("Successfully configured Blueprint Engine Add-on.")
-            else:
-                _LOGGER.error(
-                    "Failed to configure add-on. Status: %s, Response: %s",
-                    response.status,
-                    await response.text(),
-                )
-    except Exception as e:
-        _LOGGER.error("Error communicating with Blueprint Engine Add-on: %s", e)
-
-
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: BlueprintConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
+    _LOGGER.info("Unloading HA 3D Blueprint entry: %s", entry.title)
 
-    return unload_ok
+    # Unload the platforms that were set up.
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
