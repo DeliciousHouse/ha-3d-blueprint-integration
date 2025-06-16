@@ -2,20 +2,27 @@
   "config": {
     "step": {
       "user": {
+        "title": "Connect to HA 3D Blueprint",
+        "description": "Please enter the hostname of your HA 3D Blueprint add-on. This is usually 'local-blueprint-engine'.",
         "data": {
-          "host": "[%key:common::config_flow::data::host%]",
-          "username": "[%key:common::config_flow::data::username%]",
-          "password": "[%key:common::config_flow::data::password%]"
+          "host": "Add-on Hostname"
+        }
+      },
+      "sensors": {
+        "title": "Select Blueprint Sensors",
+        "description": "Please select your stationary Bluetooth sensor entities and the single 'BLE Transmitter' sensor entity from your mobile phone.",
+        "data": {
+          "stationary_sensors": "Stationary Sensors",
+          "mobile_beacon_sensor": "Mobile Beacon Sensor"
         }
       }
-    },
-    "error": {
-      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-      "unknown": "[%key:common::config_flow::error::unknown%]"
-    },
-    "abort": {
-      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
     }
+  },
+  "error": {
+    "cannot_connect": "Failed to connect to the add-on. Please check the hostname and ensure the add-on is running.",
+    "unknown": "An unexpected error occurred."
+  },
+  "abort": {
+    "already_configured": "This device is already configured."
   }
 }
