@@ -1,9 +1,12 @@
+"""Camera platform for HA 3D Blueprint."""
+
 import logging
 
-from homeassistant.components.camera import Camera
+from homeassistant.components.local_file.camera import LocalFileCamera
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import DOMAIN
 
@@ -20,46 +23,30 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the camera platform."""
-    async_add_entities([BlueprintCamera(hass, entry)])
+    # The LocalFileCamera handles all the file reading and serving.
+    camera = BlueprintCamera(entry, SVG_PATH)
+    async_add_entities([camera])
 
 
-class BlueprintCamera(Camera):
-    """The camera entity for the 3D Blueprint."""
+class BlueprintCamera(LocalFileCamera):
+    """The camera entity for the 3D Blueprint, based on LocalFileCamera."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    def __init__(self, entry: ConfigEntry, file_path: str) -> None:
         """Initialize the camera."""
-        super().__init__()
-        self.hass = hass
-        self.entry = entry
-        self._attr_name = "3D Blueprint Live View"
+        super().__init__(entry.entry_id, file_path)
+        # We override the name and unique_id from the base class.
+        self._attr_name = "HA 3D Blueprint"
         self._attr_unique_id = f"{entry.entry_id}_blueprint_camera"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": "HA 3D Blueprint Control",
-            "manufacturer": "Community",
-        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name="HA 3D Blueprint Control",
+            manufacturer="DeliciousHouse",
+            model="Blueprint Engine",
+        )
 
     @property
     def content_type(self) -> str:
         """Return the content type of the image."""
+        # Override the content type to specify SVG.
         return "image/svg+xml"
 
-    async def async_camera_image(
-        self, width: int | None = None, height: int | None = None
-    ) -> bytes | None:
-        """Return the SVG image as bytes."""
-        try:
-            # Asynchronously read the file from the shared directory
-            async with self.hass.async_add_executor_job(self._read_svg_file) as image:
-                return image
-        except FileNotFoundError:
-            _LOGGER.warning("Blueprint SVG file not found at: %s", SVG_PATH)
-            return None
-        except Exception as e:
-            _LOGGER.error("Error reading blueprint SVG file: %s", e)
-            return None
-
-    def _read_svg_file(self) -> bytes | None:
-        """Read the SVG file in a blocking way."""
-        with open(SVG_PATH, "rb") as f:
-            return f.read()
