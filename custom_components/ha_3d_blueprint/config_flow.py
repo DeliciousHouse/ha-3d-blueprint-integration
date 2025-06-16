@@ -50,7 +50,7 @@ async def validate_host_connection(
     await api_client.configure_engine(config_data={})
 
 
-class BlueprintConfigFlow(ConfigFlow, domain=DOMAIN):
+class ConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for HA 3D Blueprint."""
 
     VERSION = 1
@@ -106,4 +106,3 @@ class BlueprintConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="sensors", data_schema=STEP_SENSORS_DATA_SCHEMA, errors=errors
         )
-
