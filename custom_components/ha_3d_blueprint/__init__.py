@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import ApiConnectionError, BlueprintApiClient
-from .const import DOMAIN
+from .const import DOMAIN, CONF_PORT
 
 # List of platforms that this integration will support.
 PLATFORMS: list[Platform] = [Platform.CAMERA, Platform.BUTTON]
@@ -18,7 +18,7 @@ PLATFORMS: list[Platform] = [Platform.CAMERA, Platform.BUTTON]
 _LOGGER = logging.getLogger(__name__)
 
 # Create a type alias for the ConfigEntry that holds our API object.
-type BlueprintConfigEntry = ConfigEntry[BlueprintApiClient]
+BlueprintConfigEntry = ConfigEntry[BlueprintApiClient]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: BlueprintConfigEntry) -> bool:
@@ -26,10 +26,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: BlueprintConfigEntry) ->
     _LOGGER.info("Setting up HA 3D Blueprint entry: %s", entry.title)
 
     host = entry.data[CONF_HOST]
+    port = entry.data[CONF_PORT] # Get the port from saved data
 
-    # 1. Create an API instance to communicate with the add-on.
+    # 1. Create the API client to communicate with the add-on.
     api_client = BlueprintApiClient(
         host=host,
+        port=port, # Pass the port to the client
         session=async_get_clientsession(hass),
     )
 

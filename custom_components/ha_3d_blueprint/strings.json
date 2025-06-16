@@ -8,21 +8,23 @@
           "host": "Add-on Hostname"
         }
       },
-      "sensors": {
-        "title": "Select Blueprint Sensors",
-        "description": "Please select your stationary Bluetooth sensor entities and the single 'BLE Transmitter' sensor entity from your mobile phone.",
+      "select_devices": {
+        "title": "Select Blueprint Devices",
+        "description": "Select your stationary Bluetooth devices (at least 3) and your single mobile device. The integration will automatically find the necessary distance and beacon sensors.",
         "data": {
-          "stationary_sensors": "Stationary Sensors",
-          "mobile_beacon_sensor": "Mobile Beacon Sensor"
+          "stationary_devices": "Stationary Devices",
+          "mobile_device": "Mobile Device"
         }
       }
     }
   },
   "error": {
     "cannot_connect": "Failed to connect to the add-on. Please check the hostname and ensure the add-on is running.",
+    "not_enough_devices": "Please select at least 3 stationary devices.",
     "unknown": "An unexpected error occurred."
   },
   "abort": {
-    "already_configured": "This device is already configured."
+    "already_configured": "This device is already configured.",
+    "no_sensors_found": "Could not automatically find the required sensors from the selected devices. Please check that the source integration (e.g., Bermuda) has created the distance and BLE transmitter sensors and that they are named descriptively."
   }
 }

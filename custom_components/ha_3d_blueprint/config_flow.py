@@ -4,53 +4,40 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from itertools import combinations
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
+from homeassistant.helpers.selector import (
+    DeviceSelector,
+    DeviceSelectorConfig,
+)
 
 from .api import ApiConnectionError, BlueprintApiClient
-from .const import DOMAIN
+from .const import DOMAIN, CONF_PORT
 
 _LOGGER = logging.getLogger(__name__)
 
-# --- Step 1: Schema to get the add-on's hostname ---
-STEP_HOST_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_HOST, default="local-blueprint-engine"): str,
-    }
-)
 
-# --- Step 2: Schema to get the required sensor entities ---
-STEP_SENSORS_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required("stationary_sensors"): EntitySelector(
-            EntitySelectorConfig(domain="sensor", multiple=True)
-        ),
-        vol.Required("mobile_beacon_sensor"): EntitySelector(
-            EntitySelectorConfig(domain="sensor")
-        ),
-    }
-)
-
-
-async def validate_host_connection(
-    hass: HomeAssistant, host: str
-) -> None:
+async def validate_host_connection(hass: HomeAssistant, host: str, port: int) -> None:
     """Validate that the host is reachable and the API responds."""
-    api_client = BlueprintApiClient(host=host, session=async_get_clientsession(hass))
-    # We don't need a real config here, just checking the connection.
-    # An empty config will cause a validation error on the add-on side,
-    # but as long as we don't get a connection error, we're good.
+    api_client = BlueprintApiClient(
+        host=host, port=port, session=async_get_clientsession(hass)
+    )
     await api_client.configure_engine(config_data={})
 
 
-class ConfigFlow(ConfigFlow, domain=DOMAIN):
+class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for HA 3D Blueprint."""
 
     VERSION = 1
@@ -59,50 +46,150 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         self.flow_data: dict[str, Any] = {}
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Handle the first step: getting the add-on host."""
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            try:
-                await validate_host_connection(self.hass, user_input[CONF_HOST])
-            except ApiConnectionError:
-                errors["base"] = "cannot_connect"
-            except Exception:
-                _LOGGER.exception("Unexpected exception during host validation")
-                errors["base"] = "unknown"
-            else:
-                # Host is valid, store it and move to the next step
-                self.flow_data.update(user_input)
-                return await self.async_step_sensors()
-
+async def async_step_user(
+    self, user_input: dict[str, Any] | None = None
+) -> ConfigFlowResult:
+    """Handle the first step: getting the add-on host and port."""
+    errors = {}
+    if user_input is None:
         return self.async_show_form(
-            step_id="user", data_schema=STEP_HOST_DATA_SCHEMA, errors=errors
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST, default="local-blueprint-engine"): str,
+                    vol.Required(CONF_PORT, default=8124): int,
+                }
+            ),
         )
 
-    async def async_step_sensors(
+    try:
+        await validate_host_connection(
+            self.hass, user_input[CONF_HOST], user_input[CONF_PORT]
+        )
+    except ApiConnectionError:
+        errors["base"] = "cannot_connect"
+    except Exception as exc:
+        _LOGGER.exception("Unexpected exception during host validation")
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST, default=user_input[CONF_HOST]): str,
+                    vol.Required(CONF_PORT, default=user_input[CONF_PORT]): int,
+                }
+            ),
+            errors={"base": "unknown"},
+            description_placeholders={"error_details": f"({type(exc).__name__}) {exc}"},
+        )
+    else:
+        self.flow_data.update(user_input)
+        return await self.async_step_select_devices()
+
+    return self.async_show_form(
+        step_id="user",
+        data_schema=vol.Schema(
+            {
+                vol.Required(CONF_HOST, default=user_input[CONF_HOST]): str,
+                vol.Required(CONF_PORT, default=user_input[CONF_PORT]): int,
+            }
+        ),
+        errors=errors,
+    )
+
+    async def async_step_select_devices(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle the second step: selecting sensors."""
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            # Combine data from the previous step with this step's data
-            self.flow_data.update(user_input)
-
-            # Add area and location info to the config entry data
-            area_registry = ar.async_get(self.hass)
-            self.flow_data["areas"] = {
-                area.id: {"name": area.name, "floor": area.floor_id}
-                for area in area_registry.async_list_areas()
-            }
-            self.flow_data["latitude"] = self.hass.config.latitude
-            self.flow_data["longitude"] = self.hass.config.longitude
-
-            return self.async_create_entry(
-                title="HA 3D Blueprint", data=self.flow_data
+        """Handle the second step: selecting devices."""
+        if user_input is None:
+            # Show form to select devices
+            return self.async_show_form(
+                step_id="select_devices",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required("stationary_devices"): DeviceSelector(
+                            DeviceSelectorConfig(multiple=True, mode="list")
+                        ),
+                        vol.Required("mobile_device"): DeviceSelector(
+                            DeviceSelectorConfig(integration="mobile_app", multiple=False)
+                        ),
+                    }
+                ),
             )
 
-        return self.async_show_form(
-            step_id="sensors", data_schema=STEP_SENSORS_DATA_SCHEMA, errors=errors
-        )
+        # User has submitted devices, now find the sensors
+        stationary_device_ids = user_input["stationary_devices"]
+        mobile_device_id = user_input["mobile_device"]
+
+        if len(stationary_device_ids) < 3:
+            return self.async_show_form(
+                step_id="select_devices",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required("stationary_devices", default=stationary_device_ids): DeviceSelector(
+                            DeviceSelectorConfig(multiple=True, mode="list")
+                        ),
+                        vol.Required("mobile_device", default=mobile_device_id): DeviceSelector(
+                            DeviceSelectorConfig(integration="mobile_app", multiple=False)
+                        ),
+                    }
+                ),
+                errors={"base": "not_enough_devices"},
+            )
+
+        entity_reg = er.async_get(self.hass)
+        device_reg = dr.async_get(self.hass)
+
+        # --- Find Stationary Sensors ---
+        stationary_sensors = set()
+        device_map = {dev_id: device_reg.async_get(dev_id) for dev_id in stationary_device_ids}
+        all_sensor_entities = {
+            entry.entity_id: entry
+            for entry in entity_reg.entities.values()
+            if entry.domain == "sensor" and entry.device_id in stationary_device_ids
+        }
+
+        for device1_id, device2_id in combinations(stationary_device_ids, 2):
+            device1_name = device_map[device1_id].name.lower()
+            device2_name = device_map[device2_id].name.lower()
+
+            for entity_id, entity in all_sensor_entities.items():
+                entity_name_lower = entity.name.lower()
+                if (
+                    entity.device_id == device1_id and
+                    device2_name in entity_name_lower
+                ):
+                    stationary_sensors.add(entity_id)
+                elif (
+                    entity.device_id == device2_id and
+                    device1_name in entity_name_lower
+                ):
+                    stationary_sensors.add(entity_id)
+
+        # --- Find Mobile Beacon Sensor ---
+        mobile_beacon_sensor = None
+        mobile_entities = er.async_entries_for_device(entity_reg, mobile_device_id)
+        for entity in mobile_entities:
+            # Use original_name if it exists, otherwise fall back to name
+            name_to_check = (entity.original_name or entity.name or "").lower()
+            if entity.domain == "sensor" and (
+                "ble" in name_to_check or "transmitter" in name_to_check
+            ):
+                mobile_beacon_sensor = entity.entity_id
+                break
+
+        if not stationary_sensors or not mobile_beacon_sensor:
+            return self.async_abort(reason="no_sensors_found")
+
+        self.flow_data["stationary_sensors"] = list(stationary_sensors)
+        self.flow_data["mobile_beacon_sensor"] = mobile_beacon_sensor
+
+        # --- Add Area and Location Info ---
+        area_reg_instance = ar.async_get(self.hass)
+        self.flow_data["areas"] = {
+            area.id: {"name": area.name, "floor": area.floor_id}
+            for area in area_reg_instance.async_list_areas()
+        }
+        self.flow_data["latitude"] = self.hass.config.latitude
+        self.flow_data["longitude"] = self.hass.config.longitude
+
+        return self.async_create_entry(title="HA 3D Blueprint", data=self.flow_data)
