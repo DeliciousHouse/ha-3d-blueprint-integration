@@ -80,8 +80,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         vol.Required("stationary_devices"): DeviceSelector(
                             DeviceSelectorConfig(multiple=True, mode="list")
                         ),
+                        # --- FIXED LINE HERE ---
                         vol.Required("mobile_device"): DeviceSelector(
-                            DeviceSelectorConfig(integration="mobile_app", multiple=False)
+                            DeviceSelectorConfig(multiple=False)
                         ),
                     }
                 ),
