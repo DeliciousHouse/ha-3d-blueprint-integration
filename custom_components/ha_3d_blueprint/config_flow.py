@@ -11,7 +11,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_HOST
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
     area_registry as ar,
     device_registry as dr,
@@ -24,16 +24,14 @@ from homeassistant.helpers.selector import (
 )
 
 from .api import ApiConnectionError, BlueprintApiClient
-from .const import DOMAIN, CONF_PORT
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def validate_host_connection(hass: HomeAssistant, host: str, port: int) -> None:
+async def validate_host_connection(hass: HomeAssistant, host: str) -> None:
     """Validate that the host is reachable and the API responds."""
-    api_client = BlueprintApiClient(
-        host=host, port=port, session=async_get_clientsession(hass)
-    )
+    api_client = BlueprintApiClient(host=host, session=async_get_clientsession(hass))
     await api_client.configure_engine(config_data={})
 
 
@@ -46,62 +44,35 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         self.flow_data: dict[str, Any] = {}
 
-async def async_step_user(
-    self, user_input: dict[str, Any] | None = None
-) -> ConfigFlowResult:
-    """Handle the first step: getting the add-on host and port."""
-    errors = {}
-    if user_input is None:
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle the first step: getting the add-on host."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                await validate_host_connection(self.hass, user_input[CONF_HOST])
+            except ApiConnectionError:
+                errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected exception during host validation")
+                errors["base"] = "unknown"
+            else:
+                # Store the host and move to the next step
+                self.flow_data.update(user_input)
+                return await self.async_step_select_devices()
+
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_HOST, default="local-blueprint-engine"): str,
-                    vol.Required(CONF_PORT, default=8124): int,
-                }
-            ),
+            data_schema=vol.Schema({vol.Required(CONF_HOST, default="local-blueprint-engine"): str}),
+            errors=errors,
         )
-
-    try:
-        await validate_host_connection(
-            self.hass, user_input[CONF_HOST], user_input[CONF_PORT]
-        )
-    except ApiConnectionError:
-        errors["base"] = "cannot_connect"
-    except Exception as exc:
-        _LOGGER.exception("Unexpected exception during host validation")
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_HOST, default=user_input[CONF_HOST]): str,
-                    vol.Required(CONF_PORT, default=user_input[CONF_PORT]): int,
-                }
-            ),
-            errors={"base": "unknown"},
-            description_placeholders={"error_details": f"({type(exc).__name__}) {exc}"},
-        )
-    else:
-        self.flow_data.update(user_input)
-        return await self.async_step_select_devices()
-
-    return self.async_show_form(
-        step_id="user",
-        data_schema=vol.Schema(
-            {
-                vol.Required(CONF_HOST, default=user_input[CONF_HOST]): str,
-                vol.Required(CONF_PORT, default=user_input[CONF_PORT]): int,
-            }
-        ),
-        errors=errors,
-    )
 
     async def async_step_select_devices(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the second step: selecting devices."""
         if user_input is None:
-            # Show form to select devices
             return self.async_show_form(
                 step_id="select_devices",
                 data_schema=vol.Schema(
@@ -116,23 +87,15 @@ async def async_step_user(
                 ),
             )
 
-        # User has submitted devices, now find the sensors
-        stationary_device_ids = user_input["stationary_devices"]
-        mobile_device_id = user_input["mobile_device"]
+        # Combine host data from step 1 with new device data from this step
+        self.flow_data.update(user_input)
+
+        stationary_device_ids = self.flow_data["stationary_devices"]
+        mobile_device_id = self.flow_data["mobile_device"]
 
         if len(stationary_device_ids) < 3:
             return self.async_show_form(
                 step_id="select_devices",
-                data_schema=vol.Schema(
-                    {
-                        vol.Required("stationary_devices", default=stationary_device_ids): DeviceSelector(
-                            DeviceSelectorConfig(multiple=True, mode="list")
-                        ),
-                        vol.Required("mobile_device", default=mobile_device_id): DeviceSelector(
-                            DeviceSelectorConfig(integration="mobile_app", multiple=False)
-                        ),
-                    }
-                ),
                 errors={"base": "not_enough_devices"},
             )
 
@@ -151,17 +114,12 @@ async def async_step_user(
         for device1_id, device2_id in combinations(stationary_device_ids, 2):
             device1_name = device_map[device1_id].name.lower()
             device2_name = device_map[device2_id].name.lower()
-
             for entity_id, entity in all_sensor_entities.items():
-                entity_name_lower = entity.name.lower()
+                entity_name_lower = (entity.name or "").lower()
                 if (
-                    entity.device_id == device1_id and
-                    device2_name in entity_name_lower
-                ):
-                    stationary_sensors.add(entity_id)
-                elif (
-                    entity.device_id == device2_id and
-                    device1_name in entity_name_lower
+                    entity.device_id == device1_id and device2_name in entity_name_lower
+                ) or (
+                    entity.device_id == device2_id and device1_name in entity_name_lower
                 ):
                     stationary_sensors.add(entity_id)
 
@@ -169,11 +127,8 @@ async def async_step_user(
         mobile_beacon_sensor = None
         mobile_entities = er.async_entries_for_device(entity_reg, mobile_device_id)
         for entity in mobile_entities:
-            # Use original_name if it exists, otherwise fall back to name
             name_to_check = (entity.original_name or entity.name or "").lower()
-            if entity.domain == "sensor" and (
-                "ble" in name_to_check or "transmitter" in name_to_check
-            ):
+            if entity.domain == "sensor" and ("ble" in name_to_check or "transmitter" in name_to_check):
                 mobile_beacon_sensor = entity.entity_id
                 break
 
